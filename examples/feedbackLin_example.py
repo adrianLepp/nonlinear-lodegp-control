@@ -8,8 +8,7 @@ from scipy.integrate import solve_ivp
 
 # ----------------------------------------------------------------------------
 from nonlinear_lodegp_control.helpers import load_system, Data_Def, Time_Def
-from nonlinear_lodegp_control.feedback_linearization import Simulation_Config, learn_system_nonlinearities, Controller
-from nonlinear_lodegp_control.gp import Linearizing_Control_5, CompositeModel
+from nonlinear_lodegp_control.feedback_linearization import Simulation_Config, learn_system_nonlinearities, Controller, Feedback_Linearizer_Umlauft, Feedback_Linearizer_Variational
 from nonlinear_lodegp_control.plotter import surface_plot, plot_trajectory,  plot_single_states
 
 torch.set_default_dtype(torch.float64)
@@ -72,7 +71,7 @@ alpha, beta, control_gp = learn_system_nonlinearities(
     system, 
     sim_configs, 
     optim_steps, 
-    ControlGP_Class = Linearizing_Control_5, #Linearizing_Control_5,# CompositeModel
+    ControlGP_Class = Feedback_Linearizer_Variational, #Feedback_Linearizer_Umlauft,# Feedback_Linearizer_Variational
     controlGP_kwargs = control_gp_kwargs,
     plot=False, 
     model_config=model_config,
@@ -101,7 +100,7 @@ test_points1, test_points2 = torch.meshgrid(
 test_points = torch.stack([test_points1.flatten(), test_points2.flatten()], dim=-1)
 
 
-if isinstance(control_gp, CompositeModel):
+if isinstance(control_gp, Feedback_Linearizer_Variational):
     train_inputs = control_gp.inducing_points
 else:
     train_inputs = control_gp.train_inputs[0]
@@ -117,7 +116,7 @@ for i in range(train_inputs.shape[0]):
 with gpytorch.settings.observation_nan_policy('mask'):
     with torch.no_grad():
         test_alpha = alpha(test_points).squeeze()
-        test_beta = beta(test_points, 0).squeeze()
+        test_beta = beta(test_points).squeeze()
 
 fig_alpha = surface_plot(
     test_points1.numpy(),
@@ -174,7 +173,7 @@ with gpytorch.settings.observation_nan_policy('mask'):
         for j in range(len(test_controller)):
             u_control = np.zeros_like(ts)
             sol = solve_ivp(
-                system.stateTransition_2, 
+                system.stateTransition, 
                 [sim_time_u.start, sim_time_u.end], 
                 x_0[0:system.state_dimension], 
                 method='RK45', 

@@ -282,20 +282,3 @@ def downsample_data(t:torch.Tensor, y:torch.Tensor, factor=10):
     y_redux = y.clone()[::factor,:]
     
     return t_redux, y_redux 
-class LossTracker:
-    def __init__(self, file_name: str):
-        self.file_name = file_name
-        try:
-            self.df = pd.read_csv(file_name)
-        except FileNotFoundError:
-            self.df = pd.DataFrame()
-
-    def add_loss(self, model_name: str, losses: list):
-        self.df[model_name] = losses
-
-    def to_csv(self):
-        self.df.to_csv(self.file_name, index=False)
-
-    def plot_losses(self):
-        loss_dict = self.df.to_dict(orient='list')
-        return plot_loss(loss_dict)

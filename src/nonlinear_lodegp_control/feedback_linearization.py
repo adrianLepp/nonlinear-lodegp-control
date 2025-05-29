@@ -6,12 +6,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.integrate import solve_ivp
 from time import perf_counter as pc
+from nonlinear_lodegp_control.warping import exponential_Gaussian, squared_gaussian
+from typing import List
+import math
 
 # ----------------------------------------------------------------------------
 
 from nonlinear_lodegp_control.lodegp import  optimize_gp, LODEGP
 from nonlinear_lodegp_control.helpers import Time_Def, ODE_System, Data_Def, downsample_data
 from nonlinear_lodegp_control.subsample import subsample_farthest_point
+from nonlinear_lodegp_control.lodegp import optimize_gp
+from nonlinear_lodegp_control.kernels import FeedbackControl_Kernel
+from nonlinear_lodegp_control.mean_modules import FeedbackControl_Mean
+from nonlinear_lodegp_control.gp import VariationalGP
 
 
 class Controller():
@@ -34,8 +41,7 @@ class Controller():
         return  - self.a @ x + self.v * y_ref
     
     def feedback_linearization(self, x:np.ndarray, y_ref:np.ndarray):
-        u0 = self.direct_control(x, y_ref)
-        beta =  self.beta(x, u0)
+        beta =  self.beta(x)
         return  self.v / beta * y_ref -  (self.alpha(x) + self.a @ x) / beta
 
     def __call__(self, x:np.ndarray, y_ref:np.ndarray):
@@ -61,6 +67,145 @@ class Simulation_Config():
         self.u = u
         self.downsample = downsample
         self.description = description
+
+
+class Feedback_Linearizer_Umlauft(gpytorch.models.ExactGP):
+    def __init__(self, x:torch.Tensor, u:torch.Tensor, y_ref:torch.Tensor, b:float, a:torch.Tensor, v:torch.Tensor, variance, **kwargs):
+        if isinstance(x, List):
+            train_x = torch.cat(x, dim=0)
+            train_u = torch.cat(u, dim=0)
+            train_y = torch.cat(y_ref, dim=0) # TODOL output is dim 3: create two masked channels before
+        else:
+            train_x = x
+            train_u = u
+            train_y = y_ref
+        train_y = torch.stack([torch.full_like(train_y, torch.nan), torch.full_like(train_y, torch.nan), train_y], dim=-1)
+
+        likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(3, )# noise_constraint=gpytorch.constraints.GreaterThan(torch.tensor(1e-15))
+
+        super().__init__(train_x,  train_y, likelihood)
+        
+        self.num_tasks = 3
+
+        self.mean_module = FeedbackControl_Mean(b, a ,v)
+        self.covar_module = FeedbackControl_Kernel(a, v)
+
+        
+        self.train_u = train_u
+
+    def forward(self, X):
+        mean_x = self.mean_module(X)
+        covar_x = self.covar_module(X)
+        return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
+
+    def optimize(self, optim_steps:int, verbose:bool):
+        training_loss, parameters =  optimize_gp(self, optim_steps, verbose)
+        self.loss = training_loss[-1]
+    
+    def get_nonlinear_fcts(self):
+        self.eval()
+        self.likelihood.eval()
+        def alpha(x):
+            if len(x.shape) == 1:
+                x = torch.tensor(x).unsqueeze(0)
+            with torch.no_grad():
+                return self(torch.tensor(x)).mean[:, 0].unsqueeze(-1)
+
+        def beta(x):
+            if len(x.shape) == 1:
+                x = torch.tensor(x).unsqueeze(0)
+            with torch.no_grad():
+                return self(torch.tensor(x)).mean[:, 1].unsqueeze(-1)
+
+        return alpha, beta
+        
+class Feedback_Linearizer_Variational(torch.nn.Module):
+    def __init__(self, train_x:torch.Tensor, train_u:torch.Tensor, train_y:torch.Tensor, **kwargs):
+        input_dim = 2
+        if isinstance(train_x, List):
+            self.train_u = torch.cat(train_u, dim=0)
+            self.train_targets = torch.cat(train_y, dim=0)
+            self.train_inputs = [torch.cat(train_x, dim=0)]
+        else:
+            self.train_u = train_u
+            self.train_targets = train_y
+            self.train_inputs = [train_x]
+
+        inducing_length = math.floor(train_x[0].shape[0] / 2)
+        train_z = torch.cat([x[0:inducing_length] for x in train_x], dim=0)
+        #FIXME: How to choose inducing points from state space?
+        # Choose inducing points by sampling uniformly from the input space
+        # Assuming the input space is bounded, define the bounds
+        x_min, x_max = train_x[:, 0].min(), train_x[:, 0].max()
+        y_min, y_max = train_x[:, 1].min(), train_x[:, 1].max()
+
+        # Generate a grid of inducing points within the bounds
+        l = 5
+        inducing_points_x, inducing_points_y = torch.meshgrid(
+            torch.linspace(x_min, x_max, l),
+            torch.linspace(y_min, y_max, l),
+            indexing='ij'
+        )
+        inducing_points = torch.stack([inducing_points_x.flatten(), inducing_points_y.flatten()], dim=-1)
+        self.inducing_points = inducing_points
+
+        super().__init__()
+
+        self._alpha = VariationalGP(inducing_points)
+        self._log_beta = VariationalGP(inducing_points)
+        self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
+
+    def forward(self, x, u):
+        alpha = self._alpha(x)
+        log_beta = self._log_beta(x)
+        beta = squared_gaussian(log_beta)
+        
+        mean = alpha.mean + beta.mean * u
+        covar = alpha.covariance_matrix + u.unsqueeze(0)*beta.covariance_matrix * u.unsqueeze(1)
+        y_pred = gpytorch.distributions.MultivariateNormal(mean, covar)
+        return y_pred, alpha, beta
+    
+    def optimize(self, optim_steps:int, verbose:bool):
+        self._alpha.train()
+        self._log_beta.train()
+        self.likelihood.train()
+        
+        optimizer = torch.optim.Adam(self.parameters(), lr=0.01)
+        mll = gpytorch.mlls.VariationalELBO(self.likelihood, self._log_beta, num_data=self.train_inputs[0].size(0))
+
+        train_loss = []
+
+        for i in range(optim_steps * 10):
+            optimizer.zero_grad()
+            y_pred , alpha, log_beta = self(self.train_inputs[0], self.train_u)
+            loss = -mll(y_pred, self.train_targets)
+            train_loss.append(loss)
+            loss.backward()
+            if i % 50 == 0 and verbose:
+                print(f"Iter {i}, Loss: {loss.item():.4f}")
+            optimizer.step()
+
+        self.loss = train_loss[-1].item()
+
+    def get_nonlinear_fcts(self):
+        self.eval()
+        self.likelihood.eval()
+        def alpha(x):
+            if len(x.shape) == 1:
+                x = torch.tensor(x).unsqueeze(0)
+            with torch.no_grad():
+                return self._alpha(torch.tensor(x)).mean
+
+        def beta(x):
+            if len(x.shape) == 1:
+                x = torch.tensor(x).unsqueeze(0)
+            with torch.no_grad():
+                log_beta = self._log_beta(torch.tensor(x))
+                _beta = squared_gaussian(log_beta)
+            return _beta.mean
+            # return torch.exp(log_beta.mean)
+        
+        return alpha, beta
         
 
 def get_state_trajectories(system:ODE_System, sim_configs:List[Simulation_Config], controller:Controller=None):
@@ -77,7 +222,7 @@ def get_state_trajectories(system:ODE_System, sim_configs:List[Simulation_Config
             y_ref = None
             
         sol = solve_ivp(
-            system.stateTransition_2, 
+            system.stateTransition, 
             [sim_config.time.start, sim_config.time.end], 
             sim_config.x_init[0:system.state_dimension], 
             method='RK45', 
@@ -178,7 +323,7 @@ def test_nonlinear_functions(control_gp, system:ODE_System, alpha, beta):
     with gpytorch.settings.observation_nan_policy('mask'): 
 
         with torch.no_grad(), gpytorch.settings.fast_pred_var(): # and gpytorch.settings.debug(False):
-            beta_gp = beta(control_gp.train_inputs[0].numpy(), 0).squeeze()
+            beta_gp = beta(control_gp.train_inputs[0].numpy()).squeeze()
             alpha_gp = alpha(control_gp.train_inputs[0].numpy()).squeeze()
 
             beta_system = torch.zeros_like(beta_gp)

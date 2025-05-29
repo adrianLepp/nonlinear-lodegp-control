@@ -61,15 +61,8 @@ class Inverted_Pendulum(ODE_System):
             b[1][0].n().simplest_rational(),
         ])
         return V
-     
-    def stateTransition(self, t, x, u=None, dt=None, model=None):
-        u_current = self.get_control_from_list(t, dt, u)
 
-        dx0 = x[1]
-        dx1 = -self.param.g/self.param.l*np.cos(x[0]) - self.param.d*x[1] - 1/self.param.m * u_current
-        return [dx0, dx1]
-
-    def stateTransition_2(self, t, x, dt=None, controller=None, u=None, y_ref=None): #FIXME how do you call me
+    def stateTransition(self, t, x, dt=None, controller=None, u=None, y_ref=None): #FIXME how do you call me
         if controller is not None:
             if y_ref is None:
                 y_ref_current = 0
@@ -92,11 +85,11 @@ class Inverted_Pendulum(ODE_System):
         return [dx0, dx1]
     
     def get_latent_control(self, u:float, x:np.ndarray):
-        y_ref = (self.alpha(x) + self.polynom(x) + u*self.beta(x,u))  / self.param.v 
+        y_ref = (self.alpha(x) + self.polynom(x) + u*self.beta(x))  / self.param.v 
         return y_ref
     
     def get_control_from_latent(self, y_ref:float, x:np.ndarray):
-        u = self.param.v / self.beta(x, 0) * y_ref -  (self.alpha(x) + self.polynom(x)) / self.beta(x,0) #FIXME how to chooose u in beta
+        u = self.param.v / self.beta(x) * y_ref -  (self.alpha(x) + self.polynom(x)) / self.beta(x)
         return u
     
     def get_control_from_list(self, t:float, dt:float, u_list:np.ndarray):
@@ -120,7 +113,7 @@ class Inverted_Pendulum(ODE_System):
     def alpha(self, x:np.ndarray):
         return -self.param.g/self.param.l * np.cos(x[0]) - self.param.d * x[1]
 
-    def beta(self, x, u=None):
+    def beta(self, x):
         return 1/self.param.m
     
     def rad_to_deg(self, x):
