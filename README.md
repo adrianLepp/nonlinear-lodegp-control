@@ -6,10 +6,17 @@ This project is based on the [LODE-GP](https://github.com/ABesginow/LODE-GPs) an
 
 ## Requirements
 
-- SageMath (https://www.sagemath.org/)
+For installation run 
 
-Install it before running:
+```bash
+git clone git@github.com:adrianLepp/nonlinear-lodegp-control.git
+pip install -e ./nonlinear-lodegp-control
+```
+
+
+SageMath (https://www.sagemath.org/) needs to be installed seperately:
 
 ```bash
 # Example install via conda (recommended):
 conda install -c conda-forge 
+```
