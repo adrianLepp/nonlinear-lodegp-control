@@ -97,35 +97,12 @@ def load_system(system_name:str, **kwargs):
             system = System1(**kwargs)
         case "inverted_pendulum":
             system = Inverted_Pendulum(**kwargs)#FIXME
-        case "nonlinear_threetank":
-            system = Nonlinear_ThreeTank(**kwargs)
         case "nonlinear_watertank":
             system = Nonlinear_Watertank(**kwargs)
         case _:
             raise ValueError(f"System {system_name} not found")
         
     return system
-
-def load_training_data(model_id:int):
-    _training_data = get_training_data(model_id)
-    _model_config = get_model_config(model_id)
-    if _training_data is not None and _model_config is not None:
-        x0 = _model_config['init_state']
-        x_r = _model_config['system_param']
-
-        train_x = torch.tensor(_training_data['time'])
-        #FIXME: model specifig
-        solution = (
-            torch.tensor(_training_data[f'f{1}'])- x_r[0], 
-            torch.tensor(_training_data[f'f{2}'])- x_r[1], 
-            torch.tensor(_training_data[f'f{3}'])- x_r[2],
-            torch.tensor(_training_data[f'f{4}'])- x_r[3]
-        )
-        train_y = torch.stack(solution, -1)
-        return train_x, train_y, x0, x_r
-        
-    else:
-        raise ValueError("No training data found")
 
 def simulate_system(system, x0, time:Time_Def, u = None, linear=False):
     ts = time.linspace()
@@ -198,42 +175,6 @@ def get_ode_from_spline(system:ODE_System, estimate:torch.Tensor, test_x:torch.T
         print('------------------------------------------')
     return ode, ode_error_list
 
-def calc_finite_differences(sample, point_step_size, skip=False, number_of_samples=0):
-    """
-    param skip: Decides whether to skip every second value of the sample.
-                Useful for cases where original samples aren't equidistant
-    """
-    if sample.ndim == 2:
-        NUM_CHANNELS = sample.shape[1]
-    else:
-        NUM_CHANNELS = 1
-    if number_of_samples == 0:
-        number_of_samples = sample.shape[0]
-
-    gradients_list = list()
-    if skip:
-        step = 2
-    for index in range(0, step*number_of_samples, step):
-        gradients_list.append(list((-sample[index] + sample[index+1])/point_step_size))
-    return gradients_list
-
-def equilibrium_base_change(time, states, equilibriums, changepoints, add=True):
-    
-    for i in range(len(equilibriums)):
-        if not add:
-            equilibriums[i] = - torch.tensor(equilibriums[i])  
-        else: 
-            equilibriums[i] =  torch.tensor(equilibriums[i])  
-    
-
-    for i in range(len(time)):
-        if time[i] <= changepoints[0]:
-            states[i] = states[i] + equilibriums[0]
-        else:
-            states[i] = states[i] + equilibriums[1]
-
-    return states
-
 def plot_results(train:Data_Def, test:Data_Def,  ref:Data_Def = None, equilibrium=None):
     labels = ['train', 'gp', 'linear']
     fig, ax1 = plt.subplots()
@@ -289,50 +230,6 @@ def plot_results(train:Data_Def, test:Data_Def,  ref:Data_Def = None, equilibriu
     ax1.grid(True)
 
 
-def save_results(
-        model, 
-        system_param, 
-        x0, 
-        sim_id:int, 
-        model_id:int, 
-        config_file:str, 
-        system_name:str, 
-        config:dict, 
-        model_path:str, 
-        train_data:Data_Def, 
-        test_data:Data_Def, 
-        train_time:Time_Def, 
-        test_time:Time_Def, 
-        error=None, 
-        ref_data:Data_Def=None, 
-        linear=False
-    ):
-
-    if error is None:
-        error = []
-    
-    torch.save(model.state_dict(), model_path)
-    with open(config_file,"w") as f:
-        config['model_id'] = model_id
-        json.dump(config, f)
-    add_modelConfig(model_id, system_name,  x0, system_param, train_time.start, train_time.end, train_time.step)
-    add_training_data(model_id, train_data.time, train_data.y)
-
-    add_simulationConfig(sim_id, model_id, system_name, x0, system_param, test_time.start, test_time.end, test_time.step, error)
-    add_simulation_data(sim_id, test_data.time, test_data.y)
-
-    if ref_data is not None:
-        if linear:
-            type = 'linear'
-        else:
-            type = 'nonlinear'
-        add_reference_data(sim_id, type, ref_data.time, ref_data.y)
-    
-    with open(config_file,"w") as f:
-        config['simulation_id'] = sim_id
-        json.dump(config, f)
-
-
 def stack_tensor(tensor, num_tasks, dim=-1, batch_dim=0):
     indices = torch.tensor([i for i in range(0, tensor.shape[-1], num_tasks)])
     zer = int(0)
@@ -364,8 +261,6 @@ def stack_plot_tensors(mean,  num_tasks):#lower, upper,
     # lower = stack_tensor(lower, num_tasks)
     # upper = stack_tensor(upper, num_tasks)
     return mean #lower, upper
-
-def plot_weights(x, weights, title="Weighting Function"):
     plt.figure(figsize=(12, 6))
     if isinstance(weights, list):
         for i, weight in enumerate(weights):
@@ -379,75 +274,6 @@ def plot_weights(x, weights, title="Weighting Function"):
     plt.ylabel("Weight")
     #plt.title(title)
 
-
-def get_config(system_name:str, config_file:str=default_config, save:bool=False):
-    print("\n----------------------------------------------------------------------------------\n")
-    try:
-        with open(config_file,"r") as f:
-            config = json.load(f)
-            model_dir=config['model_dir']
-            data_dir=config['data_dir']
-            model_name = config['model_name']
-
-            if save:
-                
-                SIM_ID = config['simulation_id'] + 1
-                MODEL_ID = config['model_id'] + 1
-
-                name =  '_' + model_name + "_" + 'mpc' + "_" + system_name
-                model_path = f'{model_dir}/{str(MODEL_ID)}{name}.pth'
-            else: 
-                SIM_ID = -1
-                MODEL_ID = -1
-                model_path = f'{model_dir}/{model_name}.pth'
-
-        
-        print(f"simulate {system_name}")
-
-        if save:
-            print(f"save model with model id {MODEL_ID}")
-            print(f"save data with data id {SIM_ID}")
-        
-    except:
-        print("No config file found. Data and model will not be saved.")
-    print("\n----------------------------------------------------------------------------------\n")
-
-    return SIM_ID, MODEL_ID, model_path, config
-
-def save_config(config:dict, config_file:str=default_config):
-    with open(config_file,"w") as f:
-        json.dump(config, f)
-
-
-def save_everything(
-        system_name:str, 
-        model_name:str, 
-        config:dict, 
-        train_data:Data_Def, 
-        gp_data:Data_Def, 
-        sim_data:Data_Def, 
-        # states:State_Description, 
-        init_state:np.ndarray,
-        system_param:np.ndarray,
-        model_dict:dict, 
-        metrics:list[float]=[]
-    ):
-    torch.save(model_dict, model_name)
-
-    add_modelConfig(config['model_id'], system_name, init_state, system_param, train_data.time_def.start, train_data.time_def.end, train_data.time_def.step)
-    add_training_data(config['model_id'], train_data.time, train_data.y)
-
-    add_simulationConfig(config['simulation_id'], config['model_id'], system_name, init_state, system_param, gp_data.time_def.start, gp_data.time_def.end, gp_data.time_def.step, metrics)
-    add_simulation_data(config['simulation_id'], gp_data.time, gp_data.y)
-
-    if sim_data is not None:
-        add_reference_data(config['simulation_id'], 'nonlinear', sim_data.time, sim_data.y)
-
-    save_config(config)
-    print(f"save model with model id {config['model_id']}")
-    print(f"save data with data id {config['simulation_id']}")
-    pass
-
 def downsample_data(t:torch.Tensor, y:torch.Tensor, factor=10):
     if t is not None:
         t_redux = t.clone()[::factor]
@@ -456,9 +282,6 @@ def downsample_data(t:torch.Tensor, y:torch.Tensor, factor=10):
     y_redux = y.clone()[::factor,:]
     
     return t_redux, y_redux 
-
-
-
 class LossTracker:
     def __init__(self, file_name: str):
         self.file_name = file_name

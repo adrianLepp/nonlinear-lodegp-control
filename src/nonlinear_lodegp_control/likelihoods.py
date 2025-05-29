@@ -70,7 +70,7 @@ class TruncatedGaussianLikelihood(gpytorch.likelihoods.Likelihood):
         #https://forum.pyro.ai/t/truncatednormal-distribution-in-pyro/4136/4 TODO check
     
 
-class _FixedTaskNoiseMultitaskLikelihood(_MultitaskGaussianLikelihoodBase):
+
     def __init__(self, noise, *args, **kwargs):
         noise_covar = FixedGaussianNoise(noise=noise)
         super().__init__(noise_covar=noise_covar, *args, **kwargs)
@@ -126,8 +126,7 @@ class _FixedTaskNoiseMultitaskLikelihood(_MultitaskGaussianLikelihoodBase):
 
 
             # TODO: copy over pieces from MultitaskGaussianLikelihood
-            #raise NotImplementedError("Task noises not supported yet.")
-
+            #raise NotImplementedError("Task noises not supported yet."
 class FixedTaskNoiseMultitaskLikelihood(_MultitaskGaussianLikelihoodBase):
     def __init__(
         self,

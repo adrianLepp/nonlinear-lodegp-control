@@ -2,64 +2,25 @@
 # from sage.all import *
 # import sage
 #https://ask.sagemath.org/question/41204/getting-my-own-module-to-work-in-sage/
-from nonlinear_lodegp_control.kernels import *
 import torch
 
 # ----------------------------------------------------------------------------
+from nonlinear_lodegp_control.kernels import *
 from nonlinear_lodegp_control.helpers import *
 from nonlinear_lodegp_control.likelihoods import *
 from nonlinear_lodegp_control.masking import *
 from nonlinear_lodegp_control.mpc import mpc_algorithm, pretrain, optimize_mpc_gp, create_setpoints
 from nonlinear_lodegp_control.lodegp import LODEGP
 from nonlinear_lodegp_control.mean_modules import Equilibrium_Mean
-
-from result_reporter.latex_exporter import save_plot_to_pdf, create_mpc_plot
+from nonlinear_lodegp_control.plotter import create_mpc_plot
 
 torch.set_default_dtype(torch.float64)
 device = 'cpu'
 
-SAVE = False
-CONFIG_FILE = 'config.json'
-
 system_name = "nonlinear_watertank"
 
 
-
-
-
-
-
 def run_sim(lengthscale=None, signal_variance=None):
-    print("\n----------------------------------------------------------------------------------\n")
-    try:
-        with open(CONFIG_FILE,"r") as f:
-            config = json.load(f)
-            model_dir=config['model_dir']
-            data_dir=config['data_dir']
-            model_name = config['model_name']
-
-            if SAVE:
-                global SIM_ID, MODEL_ID
-                SIM_ID = config['simulation_id'] + 1
-                MODEL_ID = config['model_id'] + 1
-
-                name =  '_' + model_name + "_" + 'mpc' + "_" + system_name
-                model_path = f'{model_dir}/{str(MODEL_ID)}{name}.pth'
-            else: 
-                SIM_ID = -1
-                MODEL_ID = -1
-                model_path = f'{model_dir}/{model_name}.pth'
-
-        
-        print(f"simulate {system_name}")
-
-        if SAVE:
-            print(f"save model with model id {MODEL_ID}")
-            print(f"save data with data id {SIM_ID}")
-        
-    except:
-        print("No config file found. Data and model will not be saved.")
-    print("\n----------------------------------------------------------------------------------\n")
 
     init_noise = [1e-8, 1e-8, 1e-12]
     target_noise = [1e-7, 1e-7, 1e-11]# [1e-8, 1e-8, 1e-12]#
@@ -72,7 +33,8 @@ def run_sim(lengthscale=None, signal_variance=None):
         'past-values' : 0,
         'init_noise' : init_noise,
         'target_noise' : target_noise,
-        'soft_constraints' : 'state_limit' # 'state_limit' or 'equilibrium'
+        'soft_constraints' : 'state_limit', # 'state_limit' or 'equilibrium',
+        'convergence_time': 100,
     }
 
     # Equilibrium values for the system
@@ -197,31 +159,7 @@ def run_sim(lengthscale=None, signal_variance=None):
     fig = create_mpc_plot(None, None, ['x1','x2', 'u'], 'Time ($\mathrm{s})$', 'Water Level ($\mathrm{m}$)', reference_data, x_e=[states.target[0],states.target[1],states.target[2]], close_constraint=False)
     plt.show()
 
-    save_plot_to_pdf(fig, f'mpc_plot_endpoint_constraint')
-
-    # plot_results(ref_data, lode_data, sim_data)
-    # plt.show()
-
-    if SAVE:
-        # torch.save(model.state_dict(), model_path)
-        with open(CONFIG_FILE,"w") as f:
-            config['model_id'] = MODEL_ID
-            config['simulation_id'] = SIM_ID
-            json.dump(config, f)
-        add_modelConfig(MODEL_ID, system_name,  x0, equilibrium, control_time.start, control_time.end, control_time.step)
-
-        add_training_data(MODEL_ID, ref_data.time, ref_data.y)
-
-        add_simulationConfig(SIM_ID, MODEL_ID, system_name, x0, equilibrium, sim_time.start, sim_time.end, sim_time.step, [control_err, constraint_viol])
-
-        add_simulation_data(SIM_ID, lode_data.time, lode_data.y)
-
-        add_reference_data(SIM_ID, 'nonlinear', sim_data.time, sim_data.y)
-
-        print(f"save model with model id {MODEL_ID}")
-        print(f"save data with data id {SIM_ID}")
-
-
+    
 run_sim()
 
 # lengthscales = [

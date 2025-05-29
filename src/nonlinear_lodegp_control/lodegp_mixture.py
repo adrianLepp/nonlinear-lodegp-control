@@ -2,6 +2,7 @@ import gpytorch
 import torch
 from linear_operator.operators import DiagLinearOperator
 # from sage.all import *
+from torch.nn import ModuleList
 
 from nonlinear_lodegp_control.kernels import *
 from nonlinear_lodegp_control.mean_modules import *
@@ -78,9 +79,9 @@ class CombinedPosterior_ELODEGP(gpytorch.models.ExactGP):
             mean_module = Equilibrium_Mean(equilibriums[i], num_tasks)
             model = LODEGP(train_x_subset, train_y_subset, likelihood, num_tasks, system_matrices[i], mean_module)
 
-            w_fcts.append(Weight_Model(centers[i], shared_weightscale=shared_weightscale, scale=weight_lengthscale[i]))
-            # if weight_lengthscale is not None:
-            #     w_fcts[i].initialize(scale=torch.tensor(weight_lengthscale))#TODO
+            w_fcts.append(Weight_Model(centers[i], shared_weightscale=shared_weightscale))
+            if weight_lengthscale is not None:
+                w_fcts[i].initialize(scale=torch.tensor(weight_lengthscale))
             
             # w_fcts[i].length = weight_lengthscale# TODO: add weight model specific paremeter beforehand to the model
             models.append(model)

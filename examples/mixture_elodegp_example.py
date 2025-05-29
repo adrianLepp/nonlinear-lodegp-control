@@ -7,23 +7,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import mean_squared_error
 
-from result_reporter.latex_exporter import plot_states, plot_weights, plot_trajectory, plot_error, save_plot_to_pdf, plot_single_states
 
 # ----------------------------------------------------------------------------
-from nonlinear_lodegp_control.helpers import get_config, Time_Def, load_system, simulate_system, downsample_data, save_everything, plot_results,  Data_Def, State_Description, get_ode_from_spline
+from nonlinear_lodegp_control.helpers import  Time_Def, load_system, simulate_system,   Data_Def, State_Description
 from nonlinear_lodegp_control.weighting import Gaussian_Weight, KL_Divergence_Weight, Epanechnikov_Weight, Mahalanobis_Distance
-from nonlinear_lodegp_control.combined_posterior import CombinedPosterior_ELODEGP
+from nonlinear_lodegp_control.lodegp_mixture import CombinedPosterior_ELODEGP
+from nonlinear_lodegp_control.plotter import plot_states, plot_weights, plot_trajectory, plot_error,  plot_single_states
 
 torch.set_default_dtype(torch.float64)
 device = 'cpu'
 
 
 local_predictions = False
-SAVE = True
 output_weights=False
 system_name = "nonlinear_watertank"
-
-SIM_ID, MODEL_ID, model_path, config = get_config(system_name, save=SAVE)
 
 optim_steps_single = 300
 optim_steps =500
@@ -67,25 +64,15 @@ for i in range(len(equilibrium_controls)):
     equilibriums.append(torch.tensor(x_e))
     centers.append(torch.tensor([x_e]))
 
-#l = 44194
-w_func = Gaussian_Weight(centers[0])
-d = w_func.covar_dist(centers[1], w_func.center, square_dist=True)
-l = d*torch.sqrt(torch.tensor(2))/4
-
-# l = l*4
-
 u = np.ones((sim_time.count,1)) * u_ctrl * system.param.u
 
 
 _train_x, _train_y= simulate_system(system, x0, sim_time, u)
-# train_x, train_y = downsample_data(_train_x, _train_y, downsample)
 
 sim_data = Data_Def(_train_x, _train_y, system.state_dimension, system.control_dimension,train_time)
 noise = torch.tensor([1e-5, 1e-5, 1e-7])
 # noise = torch.tensor([0, 0, 0])
 train_data = sim_data.downsample(downsample).add_noise(noise)
-
-# train_data = Data_Def(train_x.numpy(), train_y.numpy(), system.state_dimension, system.control_dimension,train_time)
 
 likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks, noise_constraint=gpytorch.constraints.Positive())
 model = CombinedPosterior_ELODEGP(
@@ -110,11 +97,6 @@ test_x = test_time.linspace()
 model.eval()
 likelihood.eval()
 
-
-#output = model(test_x)
-# with torch.no_grad() and gpytorch.settings.debug(False):
-#     output = likelihood(model(test_x))
-#     estimate = output.mean
 with torch.no_grad():
     estimate, cov, weights = model.predict(test_x)
     output = gpytorch.distributions.MultitaskMultivariateNormal(estimate, cov)
@@ -127,8 +109,6 @@ test_data = Data_Def(test_x.numpy(), estimate.detach().numpy(), system.state_dim
                 'upper': upper.detach().numpy(),
                 }, )
 
-# plot_results(train_data, test_data)
-# fig_results = plot_states([test_data, sim_data, train_data ], data_names=['mixture model', 'simulation', 'training data'])
 
 state_figure = plot_single_states(
                 [test_data, sim_data, train_data],
@@ -145,12 +125,8 @@ weight_plot = plot_weights(test_x, weights, 'time (s)')
 
 states = State_Description(
     equilibrium=equilibriums[-1],
-    # equilibrium=torch.stack(equilibriums), 
     init=x0, 
     min=None, max=None)
-
-# _, _ = get_ode_from_spline(system, np.maximum(test_data.y, 0), test_data.time)
-
 
 error_gp = Data_Def(test_data.time, abs(test_data.y - sim_data.y.numpy()), system.state_dimension, system.control_dimension) 
 rmse_gp = np.sqrt(mean_squared_error(sim_data.y.numpy(), test_data.y))
@@ -160,9 +136,6 @@ print(f"GP Model RMSE: {rmse_gp}, Standard Deviation: {std_gp}")
 
 
 error_data_gp = error_gp.to_report_data()
-
-
-# fig_error = plot_error(error_data_gp, header=['x1', 'x2', 'u1'], uncertainty = None)# output.variance
 
 err_figure = plot_single_states(
                 [error_gp],
@@ -188,9 +161,7 @@ for i, center in enumerate(model.true_centers):
     centers[1][i] = center[1]
 
 trajectory_plot = plot_trajectory(test_data, {'equilibrium points': equilibriums, 'model centers': centers})
-save_plot_to_pdf(trajectory_plot, f'trajectory_plot_m_talk')
 
-# plt.show()
 
 
 
@@ -218,22 +189,3 @@ if local_predictions:
             )
 
 plt.show()
-
-if SAVE:
-    config['model_id'] = MODEL_ID
-    config['simulation_id'] = SIM_ID
-    # save_plot_to_pdf(fig_error, f'error_plot_{SIM_ID}')
-    # save_plot_to_pdf(fig_results, f'results_plot_{SIM_ID}')
-    save_plot_to_pdf(trajectory_plot, f'trajectory_plot_{SIM_ID}')
-    save_plot_to_pdf(weight_plot, f'weight_plot_{SIM_ID}')
-    save_everything(
-        system_name, 
-        model_path, 
-        config, 
-        train_data, 
-        test_data, 
-        sim_data=sim_data, 
-        init_state=states.init.numpy(), 
-        system_param=states.equilibrium.numpy(), 
-        model_dict=model.state_dict()
-    )

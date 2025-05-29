@@ -5,13 +5,12 @@ from typing import List
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.integrate import solve_ivp
-from time import sleep, perf_counter as pc
+from time import perf_counter as pc
 
 # ----------------------------------------------------------------------------
+
 from nonlinear_lodegp_control.lodegp import  optimize_gp, LODEGP
-from nonlinear_lodegp_control.helpers import Time_Def, ODE_System, simulate_system, Data_Def, downsample_data, load_system
-from nonlinear_lodegp_control.gp import GP, Linearizing_Control, Linearizing_Control_2, Linearizing_Control_4
-from nonlinear_lodegp_control.likelihoods import FixedTaskNoiseMultitaskLikelihood
+from nonlinear_lodegp_control.helpers import Time_Def, ODE_System, Data_Def, downsample_data
 from nonlinear_lodegp_control.subsample import subsample_farthest_point
 
 
@@ -90,9 +89,6 @@ def get_state_trajectories(system:ODE_System, sim_configs:List[Simulation_Config
         x_u = np.concatenate((sol.y.transpose(), u.reshape(-1,1)), axis=1)
         data.append(Data_Def(torch.tensor(sim_config.time.linspace()), torch.tensor(x_u), system.state_dimension, system.control_dimension, sim_config.time, y_names=['x1','x2','u']))
 
-        # t, x_u= simulate_system(system, sim_config.x_init[0:system.state_dimension], sim_config.time, sim_config.u)
-        #t, x_u = downsample_data(_t, _x_u, sim_config.downsample)
-        # data.append(Data_Def(t, x_u, system.state_dimension, system.control_dimension, y_names=['x1','x2','u']))
     return data
 
 def get_linearizing_feedback(gp:LODEGP, sim_configs:List[Simulation_Config], system_data:List[Data_Def], optim_steps:int, model_config:dict):
@@ -138,7 +134,7 @@ def get_feedback_controller(
         system_data:List[Data_Def], 
         lodegp_data:List[Data_Def], 
         optim_steps:int, 
-        ControlGP_Class: Linearizing_Control_2 | Linearizing_Control_4,
+        ControlGP_Class,
         controlGP_kwargs:dict,
         model_config,
         ):
@@ -155,28 +151,16 @@ def get_feedback_controller(
         _train_x_u[:,-1] = system_data[i].y[:,-1].clone()
         _train_y_ref = lodegp_data[i].y[:,-1].clone() 
 
-        # a downsample 
-        # train_y_ref, train_x_u  = downsample_data(_train_y_ref, _train_x_u, sim_config.downsample)
-        # _, _var  = downsample_data(None, lodegp_data[i].uncertainty['variance'].clone(), sim_config.downsample)
-        # x.append(train_x_u[:,:-1])
-        # u.append(train_x_u[:,-1])
-        # y_ref.append(train_y_ref)
-        # var.append(_var[:,-1])
-
-
         x.append(_train_x_u[:,:-1])
         u.append(_train_x_u[:,-1])
         y_ref.append(_train_y_ref)
         var.append(lodegp_data[i].uncertainty['variance'].clone()[:,-1])
-
-        # b not
 
     x_subsample, y_subsample, idx = subsample_farthest_point(torch.cat(x, dim=0), torch.cat(y_ref, dim=0) ,100)
     u_supsample = torch.cat(u, dim=0)[idx]
     var_subsample = torch.cat(var, dim=0)[idx]
 
     control_gp = ControlGP_Class(x_subsample, u_supsample, y_subsample, variance=var_subsample, **controlGP_kwargs)
-    # control_gp = ControlGP_Class(x, u, y_ref, variance=var, **controlGP_kwargs) #, b = 0.1, controller=controller
 
     if model_config['load']:
         control_gp.load_state_dict(torch.load(model_config['model_path'], map_location=model_config['device']))
@@ -197,16 +181,10 @@ def test_nonlinear_functions(control_gp, system:ODE_System, alpha, beta):
             beta_gp = beta(control_gp.train_inputs[0].numpy(), 0).squeeze()
             alpha_gp = alpha(control_gp.train_inputs[0].numpy()).squeeze()
 
-            # beta_gp = torch.zeros_like(control_gp.train_targets)
-            # alpha_gp = torch.zeros_like(control_gp.train_targets)
-
             beta_system = torch.zeros_like(beta_gp)
             alpha_system = torch.zeros_like(alpha_gp)
 
             for i in range(control_gp.train_targets.shape[0]):
-                # beta_gp[i] = beta(control_gp.train_inputs[0][i].numpy(), 0).item()
-                # alpha_gp[i] = alpha(control_gp.train_inputs[0][i].numpy()).item()
-
                 beta_system[i] = system.beta(control_gp.train_inputs[0][i].numpy())
                 alpha_system[i] = system.alpha(control_gp.train_inputs[0][i].numpy())
 

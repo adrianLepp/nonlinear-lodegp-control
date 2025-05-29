@@ -12,7 +12,6 @@ __all__ = [
     "ThreeTank", 
     "Bipendulum",
     "Inverted_Pendulum",
-    "Nonlinear_ThreeTank",
     "Nonlinear_Watertank",
     "get_equilibrium_equations",
     "solve_for_equilibrium",

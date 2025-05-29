@@ -1,35 +1,26 @@
 
 #https://ask.sagemath.org/question/41204/getting-my-own-module-to-work-in-sage/
 import torch
-from result_reporter.latex_exporter import plot_states, surface_plot, plot_trajectory, save_plot_to_pdf, plot_single_states
 import numpy as np
 import matplotlib.pyplot as plt
 import gpytorch
+from scipy.integrate import solve_ivp
 
 # ----------------------------------------------------------------------------
-from nonlinear_lodegp_control.helpers import get_config, load_system, Data_Def, Time_Def, save_everything
+from nonlinear_lodegp_control.helpers import load_system, Data_Def, Time_Def
 from nonlinear_lodegp_control.feedback_linearization import Simulation_Config, learn_system_nonlinearities, Controller
-from nonlinear_lodegp_control.gp import Linearizing_Control_2, Linearizing_Control_4, Linearizing_Control_5, CompositeModel
-from scipy.integrate import solve_ivp
+from nonlinear_lodegp_control.gp import Linearizing_Control_5, CompositeModel
+from nonlinear_lodegp_control.plotter import surface_plot, plot_trajectory,  plot_single_states
 
 torch.set_default_dtype(torch.float64)
 device = 'cpu'
 
-SAVE = False
 
 system_name = "inverted_pendulum"
 
-SIM_ID, MODEL_ID, model_path, config = get_config(system_name, save=SAVE)
-
-model_dir=config['model_dir']
-data_dir=config['data_dir']
-model_name = config['model_name']
-name =  '_' + model_name + "_" + system_name
-model_path = f'{model_dir}/me_1{name}.pth' #umlauft_1 me_1
-
 model_config = {
     'device': device,
-    'model_path': model_path,
+    # 'model_path': model_path,
     'load': False,
     'save': False,
 }
@@ -95,7 +86,7 @@ v = 0
 # Plot surface of alpha and beta
 # -----------------------------------------------------------------
 
-'''
+
 
 l = 100
 val = 3* torch.pi / 4
@@ -152,11 +143,6 @@ fig_beta = surface_plot(
 
 plt.show()
 
-'''
-
-
-# save_plot_to_pdf(fig_alpha, f'alpha_feedbackLin_b')
-# save_plot_to_pdf(fig_beta, f'beta_feedbackLin_b')  
 
 
 # -----------------------------------------------------------------
@@ -206,13 +192,6 @@ with gpytorch.settings.observation_nan_policy('mask'):
 
             control_data.append(Data_Def(ts.numpy(), control_y, system.state_dimension, system.control_dimension, sim_time_u))
 
-# fig_results = plot_states(
-#     control_data,
-#     data_names = ['GP', "exact feedback", r'$u_0$'], 
-#     header= [r'$x_1$', r'$x_2$', r'$u$'], yLabel=['Angle (rad)', 'Force (N)'],
-#     title = f'Inverted Pendulum GP Control: a0: {a0}, a1: {a1}, v: {v}'
-#     )
-
 calc_time_mean1, calc_time_std1 = test_controller[1].get_performance()
 
 calc_time_mean2, calc_time_std2 = test_controller[2].get_performance()
@@ -231,34 +210,5 @@ figure = plot_single_states(
 
 trajectory_plot = plot_trajectory(control_data, {}, ax_labels=['angle (rad)', 'angular velocity (rad/s)'], labels = ['GP', "exact feedback", r'$u_0$'])
 
-# plt.figure()
-# plt.plot(control_data[0].y[:,0],control_data[0].y[:,1], label='GP')
-# plt.plot(control_data[1].y[:,0],control_data[1].y[:,1], label='Feedback')
-# plt.plot(control_data[2].y[:,0],control_data[2].y[:,1], label='Simple')
-# plt.xlabel('Angle [rad]')
-# plt.ylabel('Angular Velocity [rad/s]')
-# plt.legend()
-# plt.grid(True)
 
 plt.show()
-
-
-if SAVE:
-    # save_plot_to_pdf(fig_alpha, f'alpha_feedbackLin_{SIM_ID}')
-    # save_plot_to_pdf(fig_beta, f'beta_feedbackLin_{SIM_ID}')    
-    # save_plot_to_pdf(fig_results, f'results_plot_feedbackLin_{SIM_ID}')
-    # save_plot_to_pdf(trajectory_plot, f'trajectory_plot_feedbackLin_{SIM_ID}')
-    # save_plot_to_pdf(figure, f'states_plot_feedbackLin_{SIM_ID}')
-    config['model_id'] = MODEL_ID
-    config['simulation_id'] = SIM_ID
-    save_everything(
-        system_name, 
-        model_path, 
-        config, 
-        control_data[0], 
-        control_data[1], 
-        sim_data=control_data[2], 
-        init_state=x_0, 
-        system_param=np.array([a0, a1, v]), 
-        model_dict=control_gp.state_dict()
-    )

@@ -1,40 +1,22 @@
 
 #https://ask.sagemath.org/question/41204/getting-my-own-module-to-work-in-sage/
 import torch
-from result_reporter.latex_exporter import plot_states, plot_single_states, save_plot_to_pdf
 import numpy as np
 import matplotlib.pyplot as plt
 import gpytorch
+from scipy.signal import savgol_filter
+from scipy.ndimage import gaussian_filter1d
 
 # ----------------------------------------------------------------------------
-from nonlinear_lodegp_control.helpers import get_config, load_system, Data_Def, Time_Def
-from nonlinear_lodegp_control.feedback_linearization import Simulation_Config, learn_system_nonlinearities, Controller, get_state_trajectories, get_linearizing_feedback
-# from nonlinear_lodegp_control.gp import Linearizing_Control_2, Linearizing_Control_4, Linearizing_Control_5, CompositeModel
-from scipy.integrate import solve_ivp
+from nonlinear_lodegp_control.helpers import load_system, Data_Def, Time_Def
+from nonlinear_lodegp_control.feedback_linearization import Simulation_Config, Controller, get_state_trajectories, get_linearizing_feedback
 from nonlinear_lodegp_control.lodegp import LODEGP
+from nonlinear_lodegp_control.plotter import plot_single_states
 
 torch.set_default_dtype(torch.float64)
 device = 'cpu'
 
-SAVE = False
-
 system_name = "inverted_pendulum"
-
-SIM_ID, MODEL_ID, model_path, config = get_config(system_name, save=SAVE)
-
-model_dir=config['model_dir']
-data_dir=config['data_dir']
-model_name = config['model_name']
-name =  '_' + model_name + "_" + system_name
-model_path = f'{model_dir}/1{name}.pth'
-
-model_config = {
-    'device': device,
-    'model_path': model_path,
-    'load': False,
-    'save': False,
-}
-
 
 t  = 10
 optim_steps = 100
@@ -60,10 +42,15 @@ sim_configs = [
 ]
 
 
+model_config = {
+    'device': device,
+    # 'model_path': model_path,
+    'load': False,
+    'save': False,
+}
+
 control_gp_kwargs = {
-    #Linearizing_Control_2
     'consecutive_training':False,
-    #Linearizing_Control_4
     'b' : 110,
     'a' : torch.tensor([[a0],[a1]], dtype=torch.float64),
     'v' : torch.tensor([v], dtype=torch.float64),
@@ -80,39 +67,20 @@ system_data_noise = [sys_data.add_noise(noise) for sys_data in system_data]
 
 system_data_ = Data_Def(system_data[0].time, np.column_stack((system_data[0].y[:,0], system_data[0].y[:,1], np.gradient(system_data[0].y[:,1], 0.01))), state_dim=3, control_dim=0 )
 
-# plot_states(
-#     system_data_noise,
-#     data_names, 
-#     header= ['$\phi$', '$\dot{\phi}$', '$u_1$'], yLabel=['Angle [°]', 'Force [N]'], #'$\ddot{\phi}$', 
-#     title = f'Inverted Pendulum Training Data'
-#         )
-# plt.show()
-
 # Calculate first and second order derivatives using finite differences
 time = system_data_noise[0].time
 dt = time[1] - time[0]
 
 
-# First-order derivative
-# Apply a simple moving average filter to smooth the noisy data
-window_size = 5  # Define the size of the moving average window
-# smoothed_signal = np.convolve(system_data_noise[0].y[:, 0], np.ones(window_size)/window_size, mode='same')
 
-from scipy.signal import savgol_filter
-from scipy.ndimage import gaussian_filter1d
+window_size = 5  # Define the size of the moving average window
+
 sigma=1e-2
 smoothed_signal = gaussian_filter1d(system_data_noise[0].y[:, 0], sigma=sigma)
-# smoothed_signal = savgol_filter(system_data_noise[0].y[:, 0], window_length=11, polyorder=3)
-
-# First-order derivative
-# first_derivative = gaussian_filter1d(np.gradient(smoothed_signal, dt), sigma=sigma)
-# second_derivative = gaussian_filter1d(np.gradient(first_derivative, dt), sigma=sigma)
-# second_derivative = np.gradient(first_derivative, dt)
 
 first_derivative = savgol_filter(system_data_noise[0].y[:, 0], window_length=11, polyorder=3, deriv=1, delta=dt)
 second_derivative = savgol_filter(system_data_noise[0].y[:, 0], window_length=11, polyorder=3, deriv=2, delta=dt)
 
-# Second-order derivative
 
 derivative_data = Data_Def(
     time, 
@@ -121,26 +89,6 @@ derivative_data = Data_Def(
     system.control_dimension, 
     sim_time
 )
-
-# plot_states(
-#     [derivative_data],
-#     data_names, 
-#     header= ['$\phi$', '$\dot{\phi}$', '$u_1$'], yLabel=['Angle [°]', 'Force [N]'],
-#     title = f'Inverted Pendulum LODE GP.'
-# )
-
-# Plot the derivatives
-# plt.figure(figsize=(10, 6))
-# plt.plot(time, system_data_noise[0].y[:, 0], label="Original Signal")
-# plt.plot(time, first_derivative, label="First Derivative")
-# plt.plot(time, second_derivative, label="Second Derivative")
-# plt.xlabel("Time [s]")
-# plt.ylabel("Values")
-# plt.title("Finite Differences Derivatives")
-# plt.legend()
-# plt.grid()
-
-# plt.show()
 
 
 
@@ -158,15 +106,5 @@ figure = plot_single_states(
     header= ['$\phi$', '$\dot{\phi}$', '$\ddot{\phi}$'], 
     yLabel=['angle (rad)', 'angular velocity (rad/s) ', 'angular acceleration ($rad/s^2$) '],
 )
-
-if SAVE:
-    save_plot_to_pdf(figure, f'exact_lin_2')
-
-# plot_states(
-#     lodegp_data,
-#     data_names, 
-#     header= ['$\phi$', '$\dot{\phi}$', '$u_1$'], yLabel=['Angle [°]', 'Force [N]'],
-#     title = f'Inverted Pendulum LODE GP.'
-# )
 
 plt.show()
